@@ -4,7 +4,8 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 
 
-UPLOAD_FOLDER = 'file_loc'
+# Use os.path.join to create a relative path for the 'UPLOAD_FOLDER'
+UPLOAD_FOLDER = os.path.join(os.getcwd(), 'static')
 ALLOWED_EXTENSIONS = set(['txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'])
 
 
