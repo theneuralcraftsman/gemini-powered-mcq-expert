@@ -2,6 +2,7 @@
 from flask import Flask, request, jsonify, session, send_file
 from werkzeug.utils import secure_filename
 from PIL import Image
+import os
 
 
 # Use os.path.join to create a relative path for the 'UPLOAD_FOLDER'
