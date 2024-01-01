@@ -1,0 +1,7 @@
+flask
+python-dotenv
+streamlit
+google-generativeai
+langchain
+PyPDF2
+chromadb
