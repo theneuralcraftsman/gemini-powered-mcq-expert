@@ -3,6 +3,7 @@ import sqlite3
 from passlib.hash import sha256_crypt
 import os
 import pyotp
+import datetime
 
 # Get the directory of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +20,9 @@ def initialize_database():
             email TEXT PRIMARY KEY,
             password TEXT NOT NULL,
             name TEXT NOT NULL,
-            verified INTEGER NOT NULL
+            verified INTEGER NOT NULL,
+            registration_time TEXT NOT NULL,  -- New column for registration time
+            subscription_level INTEGER DEFAULT 0  -- New column for subscription level
         )
     ''')
 
@@ -48,7 +51,11 @@ def insert_user(email, password, name, verified):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    cursor.execute('INSERT INTO users (email, password, name, verified) VALUES (?, ?, ?, ?)', (email, password, name, verified))
+    # Get the current date and time
+    registration_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute('INSERT INTO users (email, password, name, verified, registration_time) VALUES (?, ?, ?, ?, ?)',
+                   (email, password, name, verified, registration_time))
 
     conn.commit()
     conn.close()
@@ -95,14 +102,20 @@ def get_user_data(email):
     cursor = conn.cursor()
 
     # Fetch user data based on email
-    cursor.execute('SELECT email, password, name, verified FROM users WHERE email = ?', (email,))
+    cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
     user_data = cursor.fetchone()
 
     conn.close()
 
     # Convert the result to a dictionary for easier use
     if user_data:
-        return {"email": user_data[0], "password": user_data[1], "name": user_data[2], "verified": bool(user_data[3])}
+        return {"email": user_data[0], 
+                "password": user_data[1], 
+                "name": user_data[2], 
+                "verified": bool(user_data[3]), 
+                "registration_time": user_data[4],
+                "subscription_level": user_data[5]
+                }
     else:
         return None
 
@@ -118,6 +131,30 @@ def delete_user(email):
 
     return rows_deleted > 0
 
+def get_non_verified_users():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Fetch non-verified users from the table along with registration date
+    cursor.execute('SELECT email, password, name, verified, registration_time FROM users WHERE verified = 0')
+    non_verified_users = cursor.fetchall()
+
+    conn.close()
+
+    # Convert the result to a list of dictionaries for easier use
+    user_list = [
+        {
+            "email": user[0],
+            "password": user[1],
+            "name": user[2],
+            "verified": bool(user[3]),
+            "registration_time": user[4]
+        }
+        for user in non_verified_users
+    ]
+
+    return user_list
+
 # database.py
 def delete_non_verified_users():
     conn = sqlite3.connect(DB_FILE)
@@ -127,6 +164,44 @@ def delete_non_verified_users():
 
     conn.commit()
     conn.close()
+
+
+def get_all_users():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Fetch all users from the table
+    cursor.execute('SELECT * FROM users')
+    all_users = cursor.fetchall()
+
+    conn.close()
+
+    # Convert the result to a list of dictionaries for easier use
+    user_list = [{"email": user[0], 
+                  "password": user[1], 
+                  "name": user[2], 
+                  "verified": bool(user[3]), 
+                  "name": user[2], 
+                  "registration_time":user[4],
+                  "subscription_level":user[5]} for user in all_users]
+
+    return user_list
+
+
+def get_users_registered_on_date(registration_date):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Fetch users registered on a particular date
+    cursor.execute('SELECT email, name, verified, registration_time FROM users WHERE DATE(registration_time) = ?', (registration_date,))
+    users_on_date = cursor.fetchall()
+
+    conn.close()
+
+    # Convert the result to a list of dictionaries for easier use
+    user_list = [{"email": user[0], "name": user[1], "verified": bool(user[2]), "registration_time": user[3]} for user in users_on_date]
+
+    return user_list
 
 if __name__ == '__main__':
     initialize_database()

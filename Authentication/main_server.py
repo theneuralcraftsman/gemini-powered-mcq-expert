@@ -4,7 +4,7 @@ from flask_mail import Mail, Message
 from db import initialize_database, generate_otp, hash_password, email_exists, get_user_data 
 from db import insert_user, update_verification_status, login_user, update_password, delete_user
 import datetime
-
+from admin_blueprint import admin_bp
 
 app = Flask(__name__)
 
@@ -21,6 +21,10 @@ mail = Mail(app)
 
 # Initialize the database
 initialize_database()
+
+
+# Register the admin blueprint
+app.register_blueprint(admin_bp, url_prefix='/admin')
 
 def send_otp_email(email, otp):
     try:
@@ -73,6 +77,8 @@ def register():
 
         # For simplicity, storing the hashed password in the database (not suitable for production)
         insert_user(email, hashed_password, name, 0)  # 0 indicates not verified
+        log_user_login("User registered", email, request.remote_addr, request.user_agent.string)
+
 
         # Send OTP via email
         if send_otp_email(email, users_db[email]["otp"]):
@@ -97,6 +103,7 @@ def verify_otp():
             if stored_otp == user_otp:
                 users_db[email]['verified'] = True
                 update_verification_status(email)
+                log_user_login("Verified", email, request.remote_addr, request.user_agent.string)
                 return jsonify({"message": "OTP verified successfully."})
             else:
                 return jsonify({"message": "Invalid OTP."}), 400
@@ -130,6 +137,8 @@ def login():
 
         if user_data:
             if login_user(email, password):
+                log_user_login("Logged in", email, request.remote_addr, request.user_agent.string)
+
                 if user_data["verified"]:
                     return jsonify({"message": "Login successful."})
                 
@@ -199,6 +208,15 @@ def delete_user_route():
 
 # Dictionary to store reset OTPs and associated emails
 reset_otps = {}
+
+def clear_reset_otp():
+    # Clean users_db when it has more than 2 entries
+    if len(reset_otps) > 2:
+        # Assuming you want to keep only the latest 2 entries
+        sorted_entries = sorted(reset_otps.items(), key=lambda x: x[1]["otp_creation_time"], reverse=True)
+        reset_otps.clear()
+        reset_otps.update(dict(sorted_entries[:2]))
+
 @app.route('/reset_password_request', methods=['POST'])
 def reset_password_request():
     data = request.get_json()
@@ -212,7 +230,7 @@ def reset_password_request():
         # Store the OTP with an expiration time (e.g., 10 minutes)
         expiration_time = datetime.datetime.now() + datetime.timedelta(minutes=10)
         reset_otps[otp] = {"email": email, "expiration_time": expiration_time}
-
+        clear_reset_otp()  # Clear reset otps
         # Send an email with the OTP
         send_reset_otp_email(email, otp)
 
@@ -261,6 +279,10 @@ def send_user_data():
         name = user_data["name"]
         
         if user_data["verified"]:
+
+            log_user_login("Auto Login",email, request.remote_addr, request.user_agent.string)
+
+
             return jsonify({"message":name})
         else:
             return jsonify({"message":"User is not verified"}), 403
@@ -269,7 +291,19 @@ def send_user_data():
         return jsonify({"message":"User does not exist"}), 400
     
 
+@app.route('/sign_out', methods=['POST'])
+def sign_out_user():
+    data = request.get_json()
+    email = data.get('email')
+    log_user_login("Signed Out",email, request.remote_addr, request.user_agent.string)
+    return jsonify({"message":"Signed out"})
+        
 
+def log_user_login(status, email, ip_address, user_agent):
+    # Log user login details to CSV file
+    log_format = '{},{},{},{},{}\n'.format(status, datetime.datetime.now(), email, ip_address, user_agent)
+    with open('user_login_log.csv', 'a') as log_file:
+        log_file.write(log_format)
 
 if __name__ == '__main__':
     app.run(debug=True)
