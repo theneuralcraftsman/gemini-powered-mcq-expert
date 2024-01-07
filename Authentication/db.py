@@ -4,6 +4,7 @@ from passlib.hash import sha256_crypt
 import os
 import pyotp
 import datetime
+import uuid
 
 # Get the directory of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,13 +18,16 @@ def initialize_database():
     # Create the users table if it doesn't exist
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            email TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            name TEXT NOT NULL,
-            verified INTEGER NOT NULL,
-            registration_time TEXT NOT NULL,  -- New column for registration time
-            subscription_level INTEGER DEFAULT 0  -- New column for subscription level
-        )
+                    s_no INTEGER PRIMARY KEY,
+                    user_id TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    verified INTEGER NOT NULL,
+                    registration_time TEXT NOT NULL,
+                    subscription_level INTEGER DEFAULT 0
+                )
+
     ''')
 
     conn.commit()
@@ -51,11 +55,14 @@ def insert_user(email, password, name, verified):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
+    # Generate a unique user_id using UUID
+    user_id = str(uuid.uuid4())
+
     # Get the current date and time
     registration_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute('INSERT INTO users (email, password, name, verified, registration_time) VALUES (?, ?, ?, ?, ?)',
-                   (email, password, name, verified, registration_time))
+    cursor.execute('INSERT INTO users (user_id, email, password, name, verified, registration_time) VALUES (?, ?, ?, ?, ?, ?)',
+                   (user_id, email, password, name, verified, registration_time))
 
     conn.commit()
     conn.close()
@@ -109,12 +116,14 @@ def get_user_data(email):
 
     # Convert the result to a dictionary for easier use
     if user_data:
-        return {"email": user_data[0], 
-                "password": user_data[1], 
-                "name": user_data[2], 
-                "verified": bool(user_data[3]), 
-                "registration_time": user_data[4],
-                "subscription_level": user_data[5]
+        return {"s_no": user_data[0],
+                "user_id": user_data[1],
+                "email": user_data[2], 
+                "password": user_data[3], 
+                "name": user_data[4], 
+                "verified": bool(user_data[5]), 
+                "registration_time": user_data[6],
+                "subscription_level": user_data[7]
                 }
     else:
         return None
@@ -136,7 +145,7 @@ def get_non_verified_users():
     cursor = conn.cursor()
 
     # Fetch non-verified users from the table along with registration date
-    cursor.execute('SELECT email, password, name, verified, registration_time FROM users WHERE verified = 0')
+    cursor.execute('SELECT s_no, user_id, email, password, name, verified, registration_time FROM users WHERE verified = 0')
     non_verified_users = cursor.fetchall()
 
     conn.close()
@@ -144,11 +153,13 @@ def get_non_verified_users():
     # Convert the result to a list of dictionaries for easier use
     user_list = [
         {
-            "email": user[0],
-            "password": user[1],
-            "name": user[2],
-            "verified": bool(user[3]),
-            "registration_time": user[4]
+            "s_no":user[0],
+            "user_id":user[1],
+            "email": user[2],
+            "password": user[3],
+            "name": user[4],
+            "verified": bool(user[5]),
+            "registration_time": user[6]
         }
         for user in non_verified_users
     ]
@@ -171,19 +182,19 @@ def get_all_users():
     cursor = conn.cursor()
 
     # Fetch all users from the table
-    cursor.execute('SELECT * FROM users')
+    cursor.execute('SELECT s_no, user_id, email, name, verified, registration_time, subscription_level FROM users')
     all_users = cursor.fetchall()
 
     conn.close()
 
     # Convert the result to a list of dictionaries for easier use
-    user_list = [{"email": user[0], 
-                  "password": user[1], 
-                  "name": user[2], 
-                  "verified": bool(user[3]), 
-                  "name": user[2], 
-                  "registration_time":user[4],
-                  "subscription_level":user[5]} for user in all_users]
+    user_list = [{"s_no":user[0],
+                  "user_id":user[1],
+                  "email": user[2], 
+                  "name": user[3], 
+                  "verified": bool(user[4]), 
+                  "registration_time":user[5],
+                  "subscription_level":user[6]} for user in all_users]
 
     return user_list
 
@@ -193,15 +204,48 @@ def get_users_registered_on_date(registration_date):
     cursor = conn.cursor()
 
     # Fetch users registered on a particular date
-    cursor.execute('SELECT email, name, verified, registration_time FROM users WHERE DATE(registration_time) = ?', (registration_date,))
+    cursor.execute('SELECT s_no, user_id, email, name, verified, subscription_level FROM users WHERE DATE(registration_time) = ?', (registration_date,))
     users_on_date = cursor.fetchall()
 
     conn.close()
 
     # Convert the result to a list of dictionaries for easier use
-    user_list = [{"email": user[0], "name": user[1], "verified": bool(user[2]), "registration_time": user[3]} for user in users_on_date]
+    user_list = [{
+        "s_no":user[0],
+        "user_id":user[1],
+        "email": user[2], 
+        "name": user[3], 
+        "verified": bool(user[4]), 
+        "subscription_level": user[5]} for user in users_on_date]
 
     return user_list
+
+# NEW - 06/01/24
+def get_users_in_time(start_date, end_date):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Fetch users registered in the specified duration
+    cursor.execute('SELECT * FROM users WHERE registration_time BETWEEN ? AND ?', (start_date, end_date))
+    users_in_duration = cursor.fetchall()
+
+    conn.close()
+
+    # Convert the result to a list of dictionaries for easier use
+    user_list = [
+        {
+            "email": user[0],
+            "password": user[1],
+            "name": user[2],
+            "verified": bool(user[3]),
+            "registration_time": user[4],
+            "subscription_level": user[5]
+        }
+        for user in users_in_duration
+    ]
+
+    return user_list
+
 
 if __name__ == '__main__':
     initialize_database()

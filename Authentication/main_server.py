@@ -77,7 +77,7 @@ def register():
 
         # For simplicity, storing the hashed password in the database (not suitable for production)
         insert_user(email, hashed_password, name, 0)  # 0 indicates not verified
-        log_user_login("User registered", email, request.remote_addr, request.user_agent.string)
+        log_user_login("User registered", email, request.remote_addr, request.user_agent.string, 0, 0)
 
 
         # Send OTP via email
@@ -103,7 +103,7 @@ def verify_otp():
             if stored_otp == user_otp:
                 users_db[email]['verified'] = True
                 update_verification_status(email)
-                log_user_login("Verified", email, request.remote_addr, request.user_agent.string)
+                log_user_login("Verified", email, request.remote_addr, request.user_agent.string, "null", "null")
                 return jsonify({"message": "OTP verified successfully."})
             else:
                 return jsonify({"message": "Invalid OTP."}), 400
@@ -137,10 +137,9 @@ def login():
 
         if user_data:
             if login_user(email, password):
-                log_user_login("Logged in", email, request.remote_addr, request.user_agent.string)
-
+                
                 if user_data["verified"]:
-                    return jsonify({"message": "Login successful."})
+                    return jsonify({"message": "Login successful.", "user_id":user_data["user_id"]})
                 
                 else:
                     # User is not verified, send OTP for verification
@@ -272,20 +271,24 @@ def reset_password():
 def send_user_data():
     data = request.get_json()
     email = data.get('email')
+    user_id_rec = data.get('saved_u_id')
+    ip_addr = data.get('ip_address') or "Not available"
+    device_id = data.get('device_id') or "Not available"
+    device_name = data.get('device_name') or "Not available"
 
     user_data = get_user_data(email)
 
     if user_data:
         name = user_data["name"]
+        sub_status = user_data["subscription_level"]
         
-        if user_data["verified"]:
+        if user_id_rec==user_data["user_id"]:
 
-            log_user_login("Auto Login",email, request.remote_addr, request.user_agent.string)
-
-
-            return jsonify({"message":name})
+            log_user_login("Auto Login",email, ip_addr, request.user_agent.string, device_id, device_name)
+            return jsonify({"subscription_level":sub_status, "name":name})
+        
         else:
-            return jsonify({"message":"User is not verified"}), 403
+            return jsonify({"message":"Can't match user credentials login again"}), 403
         
     else:
         return jsonify({"message":"User does not exist"}), 400
@@ -299,9 +302,9 @@ def sign_out_user():
     return jsonify({"message":"Signed out"})
         
 
-def log_user_login(status, email, ip_address, user_agent):
+def log_user_login(status, email, ip_address, user_agent, device_id, device_name):
     # Log user login details to CSV file
-    log_format = '{},{},{},{},{}\n'.format(status, datetime.datetime.now(), email, ip_address, user_agent)
+    log_format = '{},{},{},{},{},{},{}\n'.format(status, datetime.datetime.now(), email, ip_address, user_agent, device_id, device_name)
     with open('user_login_log.csv', 'a') as log_file:
         log_file.write(log_format)
 

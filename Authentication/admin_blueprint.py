@@ -1,7 +1,8 @@
 # admin_routes.py
 from flask import Blueprint, jsonify, request, send_file
 from db import (get_user_data, delete_user, update_verification_status, get_non_verified_users,
-                get_all_users, get_users_registered_on_date, delete_non_verified_users)
+                get_all_users, get_users_registered_on_date, delete_non_verified_users,
+                get_users_in_time)
 import datetime
 import os
 
@@ -134,5 +135,39 @@ def delete_previous_logs():
 
     except Exception as e:
         return jsonify({"message": f"Error: {str(e)}"}), 500
+    
+
+# NEW - 06/01/24
+@admin_bp.route('/users_in_time_duration', methods=['GET'])
+def get_users_in_time_duration():
+    try:
+        duration = request.args.get('duration')
+
+        if duration:
+            start_date, end_date = parse_duration(duration)
+
+            # Fetch users registered in the specified duration
+            users_in_duration = get_users_in_time(start_date, end_date)
+
+            return jsonify(users_in_duration)
+        else:
+            return jsonify({"message": "Invalid or missing duration parameter in the request."}), 400
+
+    except Exception as e:
+        return jsonify({"message": f"Error: {str(e)}"}), 500
+
+# Function to parse the duration parameter
+def parse_duration(duration):
+    end_date = datetime.datetime.now()
+    if duration == "Last 30 Days":
+        start_date = end_date - datetime.timedelta(days=30)
+    elif duration == "Last 6 Months":
+        start_date = end_date - datetime.timedelta(days=6 * 30)
+    elif duration == "Last Year":
+        start_date = end_date - datetime.timedelta(days=365)
+    else:
+        start_date = datetime.datetime(1900, 1, 1)  # Default: All Time
+
+    return start_date, end_date
 
 
