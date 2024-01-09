@@ -50,6 +50,7 @@ def fetch_user_details():
     else:
         return jsonify({"message": "Invalid or missing email in the request."}), 400
 
+
 @admin_bp.route('/user', methods=['DELETE'])
 def delete_user_by_admin():
     data = request.get_json()

@@ -1,10 +1,13 @@
 # server.py
 from flask import Flask, request, jsonify
 from flask_mail import Mail, Message
-from db import initialize_database, generate_otp, hash_password, email_exists, get_user_data 
-from db import insert_user, update_verification_status, login_user, update_password, delete_user
+from db import (initialize_database, generate_otp, hash_password, email_exists, get_user_data, 
+                insert_user, update_verification_status, login_user, update_password, delete_user,
+                insert_otp, verify_otp_in_database, get_user_by_id, get_max_requests,
+                insert_user_request, update_user_requests, get_user_requests)
 import datetime
 from admin_blueprint import admin_bp
+import re
 
 app = Flask(__name__)
 
@@ -29,7 +32,7 @@ app.register_blueprint(admin_bp, url_prefix='/admin')
 def send_otp_email(email, otp):
     try:
         message = Message("OTP for Registration", recipients=[email])
-        message.body = f"Your OTP for registration is: {otp} \n\nThis OTP has a validity of 2mins."
+        message.body = f"Your OTP for registration is: {otp} \n\nThis OTP has a validity of 2 mins."
         mail.send(message)
         return True
     except Exception as e:
@@ -46,16 +49,18 @@ def send_reset_otp_email(email, otp):
     except Exception as e:
         print(f"Error sending email to {email}: {e}")
         return False
+    
 
-users_db = {}
+def is_valid_email(email):
+    # Regular expression for a more specific email format validation
+    email_regex = re.compile(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
 
-def clean_users_db():
-    # Clean users_db when it has more than 2 entries
-    if len(users_db) > 2:
-        # Assuming you want to keep only the latest 2 entries
-        sorted_entries = sorted(users_db.items(), key=lambda x: x[1]["otp_creation_time"], reverse=True)
-        users_db.clear()
-        users_db.update(dict(sorted_entries[:2]))
+    # Check if the email matches the regex pattern
+    return bool(re.match(email_regex, email))
+
+
+
+
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -64,14 +69,21 @@ def register():
     email = data.get('email')
     password = data.get('password')
     name = data.get('name')  # Include the name field
-
+   
     if email and password and name:
         if email_exists(email):
             return jsonify({"message": "Email already registered."}), 400
+        
+        # Validate email format and other input
+        if not is_valid_email(email):
+            return jsonify({"message": "Invalid email format"}), 400
 
-        users_db[email] = {"otp": generate_otp(), "verified": False, "otp_creation_time": datetime.datetime.now()}
+        #users_db[email] = {"otp": generate_otp(), "verified": False, "otp_creation_time": datetime.datetime.now()}
 
-        clean_users_db()  # Clean users_db
+        otp = generate_otp()
+        insert_otp(email, otp)
+
+        
 
         hashed_password = hash_password(password)
 
@@ -81,7 +93,7 @@ def register():
 
 
         # Send OTP via email
-        if send_otp_email(email, users_db[email]["otp"]):
+        if send_otp_email(email, otp):
             return jsonify({"message": "Registration successful. Please check your email for OTP."})
         else:
             return jsonify({"message": "Failed to send OTP. Please try again later."}), 500
@@ -94,21 +106,15 @@ def verify_otp():
     email = data.get('email')
     user_otp = data.get('otp')
 
-    if email and user_otp and email in users_db:
-        stored_otp = users_db[email]["otp"]
-        otp_creation_time = users_db[email]["otp_creation_time"]
-
-        # Check if the OTP is not expired (2 minutes expiration time)
-        if datetime.datetime.now() < otp_creation_time + datetime.timedelta(minutes=2):
-            if stored_otp == user_otp:
-                users_db[email]['verified'] = True
-                update_verification_status(email)
-                log_user_login("Verified", email, request.remote_addr, request.user_agent.string, "null", "null")
-                return jsonify({"message": "OTP verified successfully."})
-            else:
-                return jsonify({"message": "Invalid OTP."}), 400
+    if email and user_otp:
+   
+        if verify_otp_in_database:
+            update_verification_status(email)
+            log_user_login("Verified", email, request.remote_addr, request.user_agent.string, "null", "null")
+            return jsonify({"message": "OTP verified successfully."})
         else:
-            return jsonify({"message": "Expired OTP. Please request a new one."}), 400
+            return jsonify({"message": "Invalid or expired OTP."}), 400
+       
 
     return jsonify({"message": "Invalid email or OTP."}), 400
 
@@ -135,6 +141,10 @@ def login():
     if email and password:
         user_data = get_user_data(email)
 
+        # Validate email format and other input # Added new not tested
+        if not is_valid_email(email):
+            return jsonify({"message": "Invalid email format"}), 400
+
         if user_data:
             if login_user(email, password):
                 
@@ -143,9 +153,9 @@ def login():
                 
                 else:
                     # User is not verified, send OTP for verification
+                    # User is not verified, send OTP for verification
                     new_otp = generate_otp()
-                    users_db[email] = {"otp": new_otp, "verified": False, "otp_creation_time": datetime.datetime.now()}
-                    clean_users_db()  # Clean users_db
+                    insert_otp(email, new_otp)  # Store OTP in the database
 
                     # Send OTP via email
                     if send_otp_email(email, new_otp):
@@ -174,8 +184,7 @@ def resend_otp():
             if user_data["verified"]==0:
                 # Generate a new OTP
                 new_otp = generate_otp()
-                users_db[email]["otp"] = new_otp
-                users_db[email]["otp_creation_time"] = datetime.datetime.now()
+                insert_otp(email, new_otp)
 
                 # Send OTP via email
                 if send_otp_email(email, new_otp):
@@ -210,11 +219,13 @@ reset_otps = {}
 
 def clear_reset_otp():
     # Clean users_db when it has more than 2 entries
-    if len(reset_otps) > 2:
+    if len(reset_otps) > 50:
         # Assuming you want to keep only the latest 2 entries
         sorted_entries = sorted(reset_otps.items(), key=lambda x: x[1]["otp_creation_time"], reverse=True)
         reset_otps.clear()
         reset_otps.update(dict(sorted_entries[:2]))
+
+
 
 @app.route('/reset_password_request', methods=['POST'])
 def reset_password_request():
@@ -293,6 +304,59 @@ def send_user_data():
     else:
         return jsonify({"message":"User does not exist"}), 400
     
+
+# 09-01-2024
+def max_requests_allowed(user_id):
+
+    # Step 1: Retrieve user data from user_info table
+    user_data = get_user_by_id(user_id)
+    if not user_data:
+        return jsonify({'message': 'User not found.'}), 404
+    # Step 2: Extract subscription level from user data
+    subscription_level = user_data.get('subscription_level')
+    if subscription_level is None:
+        return jsonify({'message': 'Subscription level not found for the user.'}), 400
+    # Step 3: Use subscription level to query subscription_tier table
+    max_requests = get_max_requests(subscription_level)
+    if not max_requests:
+        return jsonify({'message': 'Subscription tier not found for the user.'}), 400
+    return max_requests
+   
+
+
+# 09-01-2024
+@app.route('/max_requests_for_users', methods=['POST'])
+def get_user_requests_data():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    MAX_REQUESTS_ALLOWED = max_requests_allowed(user_id)
+    
+    try:
+        # Check if the guest user exists
+        user_data = get_user_requests(user_id)
+        
+        if user_data:
+            requests_made = user_data["requests_made"]
+            if requests_made < MAX_REQUESTS_ALLOWED:
+                update_user_requests(user_id)
+                
+            else:
+                # Max requests reached, return an appropriate response
+                return jsonify({'message': 'Max limit reached for user. Try again later.'}), 429
+        else:
+            
+            # Guest user does not exist, insert a new entry
+            insert_user_request(user_id)
+            print("abc")
+
+        return jsonify({'message': 'User data processed successfully.'})
+
+    except Exception as e:
+        # Handle exceptions (e.g., database errors)
+        return jsonify({'error': f'Error processing guest data: {str(e)}'}), 500
+
+
 
 @app.route('/sign_out', methods=['POST'])
 def sign_out_user():
